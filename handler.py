@@ -6,7 +6,7 @@ import io
 import os
 
 # Load model once (cold start)
-model_id = "deepseek-ai/deepseek-vl-2-small"
+model_id = "deepseek-ai/deepseek-vl2-small"
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 model = AutoModelForVision2Seq.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True).cuda()
 model.eval()
