@@ -3,3 +3,4 @@ uvicorn[standard]
 transformers
 torch
 Pillow
+vllm==0.3.2
