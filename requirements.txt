@@ -1,4 +1,4 @@
-torch
+fastapi
+uvicorn[standard]
 transformers
-accelerate
 Pillow
