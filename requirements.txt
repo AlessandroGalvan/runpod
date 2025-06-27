@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
 transformers
-torch
+deepseek-vl2
 Pillow
-vllm==0.3.2
+requests
