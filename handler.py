@@ -1,34 +1,45 @@
-from transformers import AutoTokenizer, AutoModelForVision2Seq
-import torch
-from PIL import Image
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 import base64
 import io
-import os
+from PIL import Image
+import torch
+from transformers import AutoProcessor, AutoModelForSeq2SeqLM
 
-# Load model once (cold start)
-model_id = "deepseek-ai/deepseek-vl2-small"
-tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-model = AutoModelForVision2Seq.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True).cuda()
-model.eval()
+app = FastAPI()
 
-def decode_image(image_b64):
-    image_bytes = base64.b64decode(image_b64)
-    return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+# Carica il modello e processor (sostituisci con il modello VL2)
+model_name = "deepseek-ai/deepseek-vl2-small"
+processor = AutoProcessor.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
-def handler(event):
-    prompt = event["input"].get("prompt", "")
-    image_b64 = event["input"].get("image", None)
+class RequestInput(BaseModel):
+    text: str
+    image_base64: Optional[str] = None  # opzionale
 
-    if image_b64:
-        image = decode_image(image_b64)
-        prompt = "<image>\n" + prompt
-        inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-        inputs.update({"pixel_values": tokenizer.image_processor(image, return_tensors="pt").pixel_values.half().to("cuda")})
-    else:
-        inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+@app.post("/predict")
+async def predict(data: RequestInput):
+    try:
+        inputs = {}
+        if data.image_base64:
+            # decodifica immagine
+            image_bytes = base64.b64decode(data.image_base64)
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            inputs['images'] = image
+        
+        inputs['text'] = data.text
 
-    with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=256)
+        # prepara inputs per il modello
+        model_inputs = processor(text=inputs.get('text', None),
+                                 images=inputs.get('images', None),
+                                 return_tensors="pt",
+                                 padding=True)
 
-    decoded = tokenizer.decode(output[0], skip_special_tokens=True)
-    return {"output": decoded}
+        # inference
+        outputs = model.generate(**model_inputs)
+        decoded = processor.decode(outputs[0], skip_special_tokens=True)
+
+        return {"result": decoded}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
