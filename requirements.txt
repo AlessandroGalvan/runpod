@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
 transformers
-deepseek-vl2
 Pillow
 requests
