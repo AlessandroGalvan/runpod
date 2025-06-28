@@ -8,3 +8,4 @@ bitsandbytes
 git+https://github.com/Alpha-VLLM/DeepSeek-VL.git
 fastapi
 uvicorn
+git+https://github.com/Alpha-VLLM/DeepSeek-VL.git
