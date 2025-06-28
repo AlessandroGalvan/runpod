@@ -1,5 +1,10 @@
+torch==2.2.2
+transformers==4.40.2
+accelerate==0.29.3
+sentencepiece
+pillow
+einops
+bitsandbytes
+git+https://github.com/Alpha-VLLM/DeepSeek-VL.git
 fastapi
-uvicorn[standard]
-transformers
-Pillow
-requests
+uvicorn
