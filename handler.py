@@ -1,63 +1,61 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import torch
+from fastapi import FastAPI, UploadFile
+from transformers import AutoModelForCausalLM
+from deepseek_vl.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
+from deepseek_vl.utils.io import load_pil_images
 from PIL import Image
-import base64
-import requests
-from io import BytesIO
-
-from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
+import tempfile
+import shutil
 
 app = FastAPI()
 
-# Inizializzazione globale
-model_name = "deepseek-ai/deepseek-vl2-small"
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_path = "deepseek-ai/deepseek-vl2-small"
 
-processor = DeepseekVLV2Processor.from_pretrained(model_name, trust_remote_code=True)
-model = DeepseekVLV2ForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(device)
-model = model.to(torch.bfloat16).eval()
+vl_chat_processor = DeepseekVLV2Processor.from_pretrained(model_path)
+tokenizer = vl_chat_processor.tokenizer
+vl_gpt = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+vl_gpt = vl_gpt.to(torch.bfloat16).cuda().eval()
 
-class RequestInput(BaseModel):
-    prompt: str
-    image: str  # base64 o URL
-    max_new_tokens: int = 512
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-def load_image(image_input: str):
-    if image_input.startswith("http"):
-        resp = requests.get(image_input)
-        img = Image.open(BytesIO(resp.content)).convert("RGB")
-    else:
-        img = Image.open(BytesIO(base64.b64decode(image_input))).convert("RGB")
-    return img
+@app.post("/predict")
+async def predict(file: UploadFile, prompt: str):
+    # Save temp image
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        image_path = tmp.name
 
-@app.post("/generate")
-async def generate(data: RequestInput):
-    try:
-        img = load_image(data.image)
-        text = data.prompt
+    conversation = [
+        {
+            "role": "<|User|>",
+            "content": f"<image>\n{prompt}",
+            "images": [image_path],
+        },
+        {"role": "<|Assistant|>", "content": ""},
+    ]
 
-        conversation = [
-            {"role": "<|User|>", "content": f"\n|ref|>{text}<|/ref|>.", "images": [img]},
-            {"role": "<|Assistant|>", "content": ""}
-        ]
-        inputs = processor(conversations=conversation, images=[img], force_batchify=True).to(device)
+    pil_images = load_pil_images(conversation)
+    prepare_inputs = vl_chat_processor(
+        conversations=conversation,
+        images=pil_images,
+        force_batchify=True,
+        system_prompt=""
+    ).to(vl_gpt.device)
 
-        inputs_embeds = model.prepare_inputs_embeds(**inputs)
+    inputs_embeds = vl_gpt.prepare_inputs_embeds(**prepare_inputs)
 
-        with torch.no_grad():
-            outputs = model.language.generate(
-                inputs_embeds=inputs_embeds,
-                attention_mask=inputs['attention_mask'],
-                pad_token_id=processor.tokenizer.eos_token_id,
-                bos_token_id=processor.tokenizer.bos_token_id,
-                eos_token_id=processor.tokenizer.eos_token_id,
-                max_new_tokens=data.max_new_tokens,
-                do_sample=False,
-                use_cache=True
-            )
-        response = processor.tokenizer.decode(outputs[0].tolist(), skip_special_tokens=True)
-        return {"response": response}
+    outputs = vl_gpt.language_model.generate(
+        inputs_embeds=inputs_embeds,
+        attention_mask=prepare_inputs.attention_mask,
+        pad_token_id=tokenizer.eos_token_id,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        max_new_tokens=512,
+        do_sample=False,
+        use_cache=True
+    )
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    answer = tokenizer.decode(outputs[0].cpu().tolist(), skip_special_tokens=True)
+    return {"response": answer}
